@@ -2,7 +2,6 @@
 
 OpenOxen 是基于 [strongdm/attractor](https://github.com/strongdm/attractor) 设计思想实现的本地工程化编排系统，核心包含 4 个模块：
 
-- `src/cli`：命令行入口（`openoxen dev` / `openoxen login`）
 - `src/cli`：命令行入口（`openoxen dev` / `openoxen login` / `openoxen skills`）
 - `src/attractor`：DOT 解析、校验、执行引擎、checkpoint
 - `src/agent`：agent loop、工具调用、执行环境
@@ -41,6 +40,7 @@ openoxen dev "<需求>" [--task <name>] [--quiet|--verbose]
 openoxen login [--provider <name>]
 openoxen skills list [--query <text>] [--limit <n>] [--json]
 openoxen skills get <id> [--file <path>] [--include-files] [--max-chars <n>] [--json]
+openoxen skills install <github-url|skill-name> [--dest <dir>] [--json]
 ```
 
 ### `openoxen dev` 行为
@@ -60,6 +60,9 @@ openoxen skills get <id> [--file <path>] [--include-files] [--max-chars <n>] [--
 
 - `skills list`：列出本地可发现技能，可用 `--query` 检索、`--limit` 限制数量。
 - `skills get <id>`：查看技能详情（默认输出 `SKILL.md`），可用 `--file` 读取指定文件。
+- `skills install <source>`：安装技能到本地目录（默认 `./.openoxen/skills`）。
+  - `source` 是 GitHub 地址时：直接按地址安装。
+  - `source` 是技能名时：先远端搜索，再安装匹配结果。
 
 ## 日志输出（已精简）
 
@@ -100,6 +103,7 @@ openoxen skills get <id> [--file <path>] [--include-files] [--max-chars <n>] [--
 - `OPENOXEN_PI_PROVIDER`：覆盖 provider 映射
 - `OPENOXEN_SKILLS_DIRS`：自定义 skills 根目录（多目录用系统 path 分隔符，如 macOS/Linux 用 `:`）
 - `OPENOXEN_ENABLE_HOME_SKILLS=1`：额外加载 `~/.codex/skills` 和 `~/.codex/superpowers/skills`
+- `OPENOXEN_SKILL_INSTALLER_DIR`：覆盖 skill-installer 脚本目录（默认 `~/.codex/skills/.system/skill-installer/scripts`）
 - `OPENOXEN_VERBOSE=0`：默认关闭 trace
 - `OPENOXEN_TRACE_PI=1`：打印 llm-client -> pi-ai 适配层 trace（敏感字段脱敏）
 - `OPENOXEN_NO_BROWSER=1`：登录时不自动打开浏览器

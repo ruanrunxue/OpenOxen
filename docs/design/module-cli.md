@@ -7,7 +7,7 @@ CLI 模块负责：
 1. 解析命令参数并分发子命令。
 2. 调用 agent 生成 DOT，失败时回退模板。
 3. 保存 DOT 到当前目录并立即执行 Attractor。
-4. 提供本地 skills 查询命令（list/get）。
+4. 提供本地 skills 命令（list/get/install）。
 5. 输出运行结果与关键日志（含颜色）。
 
 ## 2. 主要入口
@@ -49,6 +49,12 @@ CLI 模块负责：
 - 读取指定 skill 的 `SKILL.md` 或指定附加文件。
 - `--include-files` 会拼接输出 skill 目录下其他文件内容。
 
+### `openoxen skills install <github-url|skill-name> [--dest <dir>] [--json]`
+
+- 当参数是 GitHub URL：直接调用 skill-installer 按 URL 安装。
+- 当参数是 skill 名称：先拉取远端技能列表（curated/experimental）搜索，再安装匹配项。
+- 默认安装目录：`<cwd>/.openoxen/skills`。
+
 ## 4. 日志策略（当前实现）
 
 ### Trace 日志
@@ -73,7 +79,7 @@ CLI 模块负责：
 2. DOT 无效：打印原因并 fallback。
 3. pipeline 失败：返回非 0。
 4. login 失败：打印错误并返回非 0。
-5. skills 参数错误或 skill 不存在：返回非 0。
+5. skills 参数错误、skill 不存在或安装失败：返回非 0。
 
 ## 6. 设计取舍
 

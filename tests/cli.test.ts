@@ -199,3 +199,50 @@ test('openoxen skills get prints skill content', async () => {
   assert.equal(logs.some((line) => line.includes('Build snake game')), true);
   assert.equal(logs.some((line) => line.includes('Write tests first')), true);
 });
+
+test('openoxen skills install with github url delegates to installer', async () => {
+  const cwd = await mkTmpDir('openoxen-cli-skills-install-url');
+  const logs: string[] = [];
+  let captured: { url?: string; dest: string } | null = null;
+
+  const code = await runCli(['skills', 'install', 'https://github.com/openai/skills/tree/main/skills/.curated/doc'], {
+    cwd: () => cwd,
+    log: (line) => logs.push(line),
+    error: () => {},
+    installSkillFromSource: async (params) => {
+      captured = { url: params.url, dest: params.dest };
+      return { stdout: `Installed doc to ${params.dest}/doc` };
+    },
+  });
+
+  assert.equal(code, 0);
+  assert.equal(captured?.url?.includes('github.com/openai/skills'), true);
+  assert.equal(captured?.dest, path.join(cwd, '.openoxen', 'skills'));
+  assert.equal(logs.some((line) => line.includes('Installed doc')), true);
+});
+
+test('openoxen skills install by name resolves from remote skills list', async () => {
+  const cwd = await mkTmpDir('openoxen-cli-skills-install-name');
+  const logs: string[] = [];
+  let captured: { repo?: string; skillPath?: string; dest: string } | null = null;
+
+  const code = await runCli(['skills', 'install', 'typescript'], {
+    cwd: () => cwd,
+    log: (line) => logs.push(line),
+    error: () => {},
+    listRemoteSkills: async () => [
+      { name: 'typescript', repo: 'openai/skills', path: 'skills/.curated/typescript', ref: 'main' },
+      { name: 'doc', repo: 'openai/skills', path: 'skills/.curated/doc', ref: 'main' },
+    ],
+    installSkillFromSource: async (params) => {
+      captured = { repo: params.repo, skillPath: params.path, dest: params.dest };
+      return { stdout: `Installed typescript to ${params.dest}/typescript` };
+    },
+  });
+
+  assert.equal(code, 0);
+  assert.equal(captured?.repo, 'openai/skills');
+  assert.equal(captured?.skillPath, 'skills/.curated/typescript');
+  assert.equal(captured?.dest, path.join(cwd, '.openoxen', 'skills'));
+  assert.equal(logs.some((line) => line.includes("Resolved skill 'typescript'")), true);
+});

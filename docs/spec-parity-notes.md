@@ -58,6 +58,7 @@
 - `--task` 指定输出文件名
 - 默认 5 轮 test fail 后进入人工介入
 - `openoxen skills list/get` 本地技能查询
+- `openoxen skills install`（GitHub URL 或按名称远端搜索后安装）
 - 精简日志：每轮摘要，不打印 system prompt
 - 关键成功/失败彩色输出
 
@@ -70,5 +71,5 @@ npm test
 ```
 
 当前结果：
-- 51 passed
+- 55 passed
 - 0 failed
