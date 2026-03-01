@@ -9,8 +9,9 @@
 3. [Attractor Module Design](./module-attractor.md)
 4. [Agent Module Design](./module-agent.md)
 5. [LLM Client Module Design](./module-llm-client.md)
-6. [Feature Designs](./features/README.md)
-7. [Documentation Policy](./documentation-policy.md)
+6. [OpenOxen Core Module Design](./module-openoxen.md)
+7. [Feature Designs](./features/README.md)
+8. [Documentation Policy](./documentation-policy.md)
 
 ## 源码对应关系
 
@@ -18,6 +19,7 @@
 - `src/attractor` -> `module-attractor.md`
 - `src/agent` -> `module-agent.md`
 - `src/llm-client` -> `module-llm-client.md`
+- `src/openoxen` -> `module-openoxen.md`
 - 重要特性 -> `docs/design/features/feature-*.md`
 
 ## 维护要求（强制）

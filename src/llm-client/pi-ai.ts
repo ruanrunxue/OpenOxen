@@ -5,6 +5,7 @@ import readline from "node:readline/promises";
 import { spawn } from "node:child_process";
 import { stdin as input, stdout as output } from "node:process";
 
+import { getOpenOxenPaths } from "../openoxen/paths.ts";
 import type { CodergenBackend } from "../attractor/handlers.ts";
 import type { NodeSpec } from "../attractor/model.ts";
 import type { PipelineContext } from "../attractor/context.ts";
@@ -59,7 +60,7 @@ interface PiAiPackage {
   loginAntigravity?: (opts?: Record<string, unknown>) => Promise<Record<string, unknown>>;
 }
 
-const DEFAULT_AUTH_FILE = path.join(os.homedir(), ".openoxen", "auth.json");
+const DEFAULT_AUTH_FILE = getOpenOxenPaths().authFile;
 
 interface NormalizedOauthAuthInfo {
   url?: string;

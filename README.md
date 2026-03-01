@@ -1,15 +1,16 @@
 # OpenOxen
 
-OpenOxen 是基于 [strongdm/attractor](https://github.com/strongdm/attractor) 设计思想实现的本地工程化编排系统，核心包含 4 个模块：
+OpenOxen 是基于 [strongdm/attractor](https://github.com/strongdm/attractor) 设计思想实现的本地工程化编排系统，核心包含 5 个模块：
 
 - `src/cli`：命令行入口（`openoxen dev` / `openoxen login` / `openoxen skills`）
 - `src/attractor`：DOT 解析、校验、执行引擎、checkpoint
 - `src/agent`：agent loop、工具调用、执行环境
 - `src/llm-client`：统一 LLM client 适配层（当前默认 `pi-ai`）
+- `src/openoxen`：本地状态路径与目录布局（`~/.openoxen`）定义
 
 关键调用链：`attractor -> agent -> llm-client(pi-ai)`。
 
-Agent 现已支持本地 Skills（兼容 agentskills.io 目录格式），可通过工具调用：
+Agent 支持本地 Skills（兼容 agentskills.io 目录格式），可通过工具调用：
 
 - `search_skills`：检索可用技能
 - `get_skill`：读取指定技能的 `SKILL.md` 与附加文件
@@ -50,7 +51,7 @@ openoxen skills install <github-url|skill-name> [--dest <dir>] [--json]
 - 默认：`openoxen.pipeline.<timestamp>.dot`
 - 指定 `--task`：`<task>.dot`
 3. 立即执行 Attractor。
-4. 运行日志写入：`.openoxen.logs.<timestamp>/`。
+4. 运行日志写入：`~/.openoxen/logs/<project>-<hash>/pipeline.<timestamp>/`。
 
 默认流程：
 - `write_tests -> develop -> review -> test`
@@ -58,11 +59,11 @@ openoxen skills install <github-url|skill-name> [--dest <dir>] [--json]
 
 ### `openoxen skills` 行为
 
-- `skills list`：列出本地可发现技能，可用 `--query` 检索、`--limit` 限制数量。
+- `skills list`：列出可发现技能，可用 `--query` 检索、`--limit` 限制数量。
 - `skills get <id>`：查看技能详情（默认输出 `SKILL.md`），可用 `--file` 读取指定文件。
-- `skills install <source>`：安装技能到本地目录（默认 `./.openoxen/skills`）。
-  - `source` 是 GitHub 地址时：直接按地址安装。
-  - `source` 是技能名时：先远端搜索，再安装匹配结果。
+- `skills install <source>`：安装技能到本地目录（默认 `~/.openoxen/skills`）。
+- `source` 是 GitHub 地址时：直接按地址安装。
+- `source` 是技能名时：先远端搜索，再安装匹配结果。
 
 ## 日志输出（已精简）
 
@@ -98,8 +99,9 @@ openoxen skills install <github-url|skill-name> [--dest <dir>] [--json]
 
 ## 常用环境变量
 
+- `OPENOXEN_HOME`：覆盖 OpenOxen 状态根目录（默认 `~/.openoxen`）
 - `OPENOXEN_MODEL`：覆盖默认模型
-- `OPENOXEN_AUTH_FILE`：OAuth 凭证文件（默认 `~/.openoxen/auth.json`）
+- `OPENOXEN_AUTH_FILE`：OAuth 凭证文件（默认 `~/.openoxen/config/auth.json`）
 - `OPENOXEN_PI_PROVIDER`：覆盖 provider 映射
 - `OPENOXEN_SKILLS_DIRS`：自定义 skills 根目录（多目录用系统 path 分隔符，如 macOS/Linux 用 `:`）
 - `OPENOXEN_ENABLE_HOME_SKILLS=1`：额外加载 `~/.codex/skills` 和 `~/.codex/superpowers/skills`
@@ -109,17 +111,44 @@ openoxen skills install <github-url|skill-name> [--dest <dir>] [--json]
 - `OPENOXEN_NO_BROWSER=1`：登录时不自动打开浏览器
 - `OPENOXEN_FAKE_PI=1`：使用本地 fake pi（调试/测试）
 
+## OpenOxen 状态目录结构
+
+默认状态目录：`~/.openoxen`（可由 `OPENOXEN_HOME` 覆盖）
+
+```text
+~/.openoxen/
+  config/
+    auth.json
+    config.json
+  memory/
+    global.md
+  skills/
+    <skill-name>/
+      SKILL.md
+      ...
+  logs/
+    <project>-<hash>/
+      pipeline.<timestamp>/
+        manifest.json
+        checkpoint.json
+        <node-id>/
+          prompt.md
+          response.md
+          status.json
+  cache/
+  tmp/
+```
+
 ## Skills 目录格式（agentskills.io 兼容）
 
-默认扫描以下目录（相对 `openoxen dev` 运行目录）：
+默认扫描目录：
 
-- `.openoxen/skills/*/SKILL.md`
-- `.codex/skills/*/SKILL.md`
+- `~/.openoxen/skills/*/SKILL.md`
 
 技能目录最小结构示例：
 
 ```text
-.openoxen/skills/snake-game/
+~/.openoxen/skills/snake-game/
   SKILL.md
   references/checklist.md
   scripts/setup.sh

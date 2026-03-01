@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
+import os from "node:os";
+
+import { getOpenOxenPaths } from "../openoxen/paths.ts";
 
 export interface SkillFileInfo {
   path: string;
@@ -193,8 +195,7 @@ function resolveRoots(cwd: string, explicitRoots?: string[]): string[] {
     return [...new Set(roots)];
   }
 
-  roots.push(path.join(cwd, ".openoxen", "skills"));
-  roots.push(path.join(cwd, ".codex", "skills"));
+  roots.push(getOpenOxenPaths().skillsDir);
   if (process.env.OPENOXEN_ENABLE_HOME_SKILLS === "1") {
     const home = os.homedir();
     roots.push(path.join(home, ".codex", "skills"));
@@ -324,4 +325,3 @@ export async function readSkillFile(skill: AgentSkill, filePath: string, maxByte
   }
   return raw;
 }
-

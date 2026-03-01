@@ -48,7 +48,7 @@
   - `test.last_failure`
   - `test.auto_repair_log`
 - 排障入口：
-  - `.openoxen.logs.<timestamp>/<test_node>/status.json`
+  - `~/.openoxen/logs/<project>-<hash>/pipeline.<timestamp>/<test_node>/status.json`
 - 典型步骤：
 1. 查看 `failure_reason`。
 2. 查看 `test.auto_repair_log` 是否执行过修复命令。

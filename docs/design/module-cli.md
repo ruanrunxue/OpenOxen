@@ -53,9 +53,11 @@ CLI 模块负责：
 
 - 当参数是 GitHub URL：直接调用 skill-installer 按 URL 安装。
 - 当参数是 skill 名称：先拉取远端技能列表（curated/experimental）搜索，再安装匹配项。
-- 默认安装目录：`<cwd>/.openoxen/skills`。
+- 默认安装目录：`~/.openoxen/skills`（可由 `OPENOXEN_HOME` 覆盖）。
 
 ## 4. 日志策略（当前实现）
+
+- pipeline 落盘日志统一写入 `~/.openoxen/logs/<project>-<hash>/pipeline.<timestamp>/`。
 
 ### Trace 日志
 

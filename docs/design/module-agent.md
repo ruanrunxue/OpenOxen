@@ -53,8 +53,7 @@ Agent 模块实现 coding agent loop，负责：
 - 目标：让 Agent 能复用外部技能包中的流程说明与辅助文件。
 - 兼容格式：agentskills.io 常见目录结构（技能目录内含 `SKILL.md`，可带 frontmatter）。
 - 默认扫描路径：
-  - `<cwd>/.openoxen/skills`
-  - `<cwd>/.codex/skills`
+  - `~/.openoxen/skills`（可由 `OPENOXEN_HOME` 覆盖）
 - 可选扩展：
   - `OPENOXEN_SKILLS_DIRS` 自定义根目录（多目录）
   - `OPENOXEN_ENABLE_HOME_SKILLS=1` 追加 `~/.codex/skills`、`~/.codex/superpowers/skills`

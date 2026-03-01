@@ -12,6 +12,7 @@
 2. [Concise Colored Logging](./feature-concise-colored-logging.md)
 3. [Agent Skills Integration](./feature-agent-skills.md)
 4. [CLI Skills Commands](./feature-cli-skills-command.md)
+5. [OpenOxen Home Layout](./feature-openoxen-home-layout.md)
 
 ## 何时新增特性文档
 

@@ -11,6 +11,7 @@ import {
 } from "../attractor/index.ts";
 import { LocalExecutionEnvironment, Session, createOpenAIProfile, type LLMClient, type SessionEvent } from "../agent/index.ts";
 import { createPiAiCodergenBackend } from "../llm-client/pi-ai.ts";
+import { resolvePipelineLogsRoot } from "../openoxen/paths.ts";
 
 export interface DevCommandContext {
   cwd: string;
@@ -481,7 +482,7 @@ export async function generateDotWithAgent(
 
 export async function runDotImmediately(dotSource: string, llmClient: LLMClient, ctx: DevCommandContext): Promise<DotRunResult> {
   const ts = formatTimestamp(ctx.now);
-  const logsRoot = path.join(ctx.cwd, `.openoxen.logs.${ts}`);
+  const logsRoot = resolvePipelineLogsRoot(ctx.cwd, `pipeline.${ts}`);
   const graph = parseDot(dotSource);
   const tracedLlm = createTracingLlmClient(llmClient, ctx, "pipeline");
 

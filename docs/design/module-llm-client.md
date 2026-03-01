@@ -33,10 +33,11 @@
 ## 4. OAuth 与凭证
 
 默认凭证位置：
-- `~/.openoxen/auth.json`
+- `~/.openoxen/config/auth.json`
 
 可配置：
 - `OPENOXEN_AUTH_FILE`
+- `OPENOXEN_HOME`
 
 支持 provider（按当前实现）：
 - `openai-codex`

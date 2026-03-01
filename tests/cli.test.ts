@@ -11,13 +11,27 @@ async function mkTmpDir(prefix: string): Promise<string> {
 }
 
 async function writeSkill(
-  cwd: string,
+  openoxenHome: string,
   id: string,
   content = "---\nname: snake-game\ndescription: Snake skill\n---\n\nUse this skill.\n",
 ): Promise<void> {
-  const dir = path.join(cwd, '.openoxen', 'skills', id);
+  const dir = path.join(openoxenHome, 'skills', id);
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, 'SKILL.md'), content, 'utf8');
+}
+
+async function withOpenOxenHome<T>(openoxenHome: string, fn: () => Promise<T>): Promise<T> {
+  const prev = process.env.OPENOXEN_HOME;
+  process.env.OPENOXEN_HOME = openoxenHome;
+  try {
+    return await fn();
+  } finally {
+    if (prev === undefined) {
+      delete process.env.OPENOXEN_HOME;
+    } else {
+      process.env.OPENOXEN_HOME = prev;
+    }
+  }
 }
 
 test('openoxen dev generates timestamped dot in cwd and immediately executes run', async () => {
@@ -161,88 +175,98 @@ test('openoxen login --provider passes provider to oauth handler', async () => {
 test('openoxen skills list prints discovered skills', async () => {
   const cwd = await mkTmpDir('openoxen-cli-skills-list');
   const logs: string[] = [];
-  await writeSkill(cwd, 'snake-game');
+  const home = path.join(cwd, '.home-openoxen');
+  await withOpenOxenHome(home, async () => {
+    await writeSkill(home, 'snake-game');
 
-  const code = await runCli(['skills', 'list'], {
-    cwd: () => cwd,
-    log: (line) => logs.push(line),
-    error: () => {},
+    const code = await runCli(['skills', 'list'], {
+      cwd: () => cwd,
+      log: (line) => logs.push(line),
+      error: () => {},
+    });
+
+    assert.equal(code, 0);
+    assert.equal(logs.some((line) => line.includes('snake-game')), true);
   });
-
-  assert.equal(code, 0);
-  assert.equal(logs.some((line) => line.includes('snake-game')), true);
 });
 
 test('openoxen skills get prints skill content', async () => {
   const cwd = await mkTmpDir('openoxen-cli-skills-get');
   const logs: string[] = [];
-  await writeSkill(
-    cwd,
-    'snake-game',
-    [
-      '---',
-      'name: snake-game',
-      'description: Build snake game',
-      '---',
-      '',
-      'Write tests first.',
-    ].join('\n'),
-  );
+  const home = path.join(cwd, '.home-openoxen');
+  await withOpenOxenHome(home, async () => {
+    await writeSkill(
+      home,
+      'snake-game',
+      [
+        '---',
+        'name: snake-game',
+        'description: Build snake game',
+        '---',
+        '',
+        'Write tests first.',
+      ].join('\n'),
+    );
 
-  const code = await runCli(['skills', 'get', 'snake-game'], {
-    cwd: () => cwd,
-    log: (line) => logs.push(line),
-    error: () => {},
+    const code = await runCli(['skills', 'get', 'snake-game'], {
+      cwd: () => cwd,
+      log: (line) => logs.push(line),
+      error: () => {},
+    });
+
+    assert.equal(code, 0);
+    assert.equal(logs.some((line) => line.includes('Build snake game')), true);
+    assert.equal(logs.some((line) => line.includes('Write tests first')), true);
   });
-
-  assert.equal(code, 0);
-  assert.equal(logs.some((line) => line.includes('Build snake game')), true);
-  assert.equal(logs.some((line) => line.includes('Write tests first')), true);
 });
 
 test('openoxen skills install with github url delegates to installer', async () => {
   const cwd = await mkTmpDir('openoxen-cli-skills-install-url');
   const logs: string[] = [];
+  const home = path.join(cwd, '.home-openoxen');
   let captured: { url?: string; dest: string } | null = null;
+  await withOpenOxenHome(home, async () => {
+    const code = await runCli(['skills', 'install', 'https://github.com/openai/skills/tree/main/skills/.curated/doc'], {
+      cwd: () => cwd,
+      log: (line) => logs.push(line),
+      error: () => {},
+      installSkillFromSource: async (params) => {
+        captured = { url: params.url, dest: params.dest };
+        return { stdout: `Installed doc to ${params.dest}/doc` };
+      },
+    });
 
-  const code = await runCli(['skills', 'install', 'https://github.com/openai/skills/tree/main/skills/.curated/doc'], {
-    cwd: () => cwd,
-    log: (line) => logs.push(line),
-    error: () => {},
-    installSkillFromSource: async (params) => {
-      captured = { url: params.url, dest: params.dest };
-      return { stdout: `Installed doc to ${params.dest}/doc` };
-    },
+    assert.equal(code, 0);
+    assert.equal(captured?.url?.includes('github.com/openai/skills'), true);
+    assert.equal(captured?.dest, path.join(home, 'skills'));
+    assert.equal(logs.some((line) => line.includes('Installed doc')), true);
   });
-
-  assert.equal(code, 0);
-  assert.equal(captured?.url?.includes('github.com/openai/skills'), true);
-  assert.equal(captured?.dest, path.join(cwd, '.openoxen', 'skills'));
-  assert.equal(logs.some((line) => line.includes('Installed doc')), true);
 });
 
 test('openoxen skills install by name resolves from remote skills list', async () => {
   const cwd = await mkTmpDir('openoxen-cli-skills-install-name');
   const logs: string[] = [];
+  const home = path.join(cwd, '.home-openoxen');
   let captured: { repo?: string; skillPath?: string; dest: string } | null = null;
+  await withOpenOxenHome(home, async () => {
+    const code = await runCli(['skills', 'install', 'typescript'], {
+      cwd: () => cwd,
+      log: (line) => logs.push(line),
+      error: () => {},
+      listRemoteSkills: async () => [
+        { name: 'typescript', repo: 'openai/skills', path: 'skills/.curated/typescript', ref: 'main' },
+        { name: 'doc', repo: 'openai/skills', path: 'skills/.curated/doc', ref: 'main' },
+      ],
+      installSkillFromSource: async (params) => {
+        captured = { repo: params.repo, skillPath: params.path, dest: params.dest };
+        return { stdout: `Installed typescript to ${params.dest}/typescript` };
+      },
+    });
 
-  const code = await runCli(['skills', 'install', 'typescript'], {
-    cwd: () => cwd,
-    log: (line) => logs.push(line),
-    error: () => {},
-    listRemoteSkills: async () => [
-      { name: 'typescript', repo: 'openai/skills', path: 'skills/.curated/typescript', ref: 'main' },
-      { name: 'doc', repo: 'openai/skills', path: 'skills/.curated/doc', ref: 'main' },
-    ],
-    installSkillFromSource: async (params) => {
-      captured = { repo: params.repo, skillPath: params.path, dest: params.dest };
-      return { stdout: `Installed typescript to ${params.dest}/typescript` };
-    },
+    assert.equal(code, 0);
+    assert.equal(captured?.repo, 'openai/skills');
+    assert.equal(captured?.skillPath, 'skills/.curated/typescript');
+    assert.equal(captured?.dest, path.join(home, 'skills'));
+    assert.equal(logs.some((line) => line.includes("Resolved skill 'typescript'")), true);
   });
-
-  assert.equal(code, 0);
-  assert.equal(captured?.repo, 'openai/skills');
-  assert.equal(captured?.skillPath, 'skills/.curated/typescript');
-  assert.equal(captured?.dest, path.join(cwd, '.openoxen', 'skills'));
-  assert.equal(logs.some((line) => line.includes("Resolved skill 'typescript'")), true);
 });

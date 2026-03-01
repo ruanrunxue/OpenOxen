@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { discoverSkills, getSkillById, readSkillFile, searchSkills, type SkillCatalog } from "../agent/index.ts";
 import { createPiAiClientAdapterFromEnv, loginPiWithOauthFromEnv, type LLMClient } from "../llm-client/pi-ai.ts";
+import { getOpenOxenPaths } from "../openoxen/paths.ts";
 import { formatTimestamp, generateDotWithAgent, runDotImmediately, sanitizeTaskName, type DotRunResult } from "./dev.ts";
 
 export interface CliDeps {
@@ -156,8 +157,8 @@ function looksLikeGithubUrl(value: string): boolean {
   return /^https?:\/\/github\.com\//i.test(value.trim());
 }
 
-function resolveDefaultInstallDest(cwd: string): string {
-  return path.join(cwd, ".openoxen", "skills");
+function resolveDefaultInstallDest(): string {
+  return getOpenOxenPaths().skillsDir;
 }
 
 function scoreSkillName(query: string, candidate: string): number {
@@ -597,7 +598,7 @@ export async function runCli(argv: string[], partialDeps: Partial<CliDeps> = {})
         deps.error(usage());
         return 1;
       }
-      const dest = path.resolve(cwd, parsed.dest ?? resolveDefaultInstallDest(cwd));
+      const dest = path.resolve(cwd, parsed.dest ?? resolveDefaultInstallDest());
       const source = parsed.source.trim();
       try {
         if (looksLikeGithubUrl(source)) {
