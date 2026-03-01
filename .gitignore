@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# OS
+.DS_Store
+
+# Build outputs
+dist/
+build/
+coverage/
+
+# Runtime logs and artifacts
+*.log
+.openoxen.logs.*
+openoxen.pipeline.*.dot
+trace-check.dot
+
+# Playwright artifacts
+playwright-report/
+test-results/
+
+# Temp files
+*.tmp
+*.swp
