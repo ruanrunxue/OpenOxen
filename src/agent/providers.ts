@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { discoverSkills, getSkillById, readSkillFile, searchSkills, type SkillCatalog } from "./skills.ts";
 import { DefaultToolRegistry } from "./tool-registry.ts";
 import type {
   ExecutionEnvironment,
@@ -12,6 +13,14 @@ import type {
 
 function schema(properties: Record<string, unknown>, required: string[] = []): Record<string, unknown> {
   return { type: "object", properties, required };
+}
+
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(max, Math.floor(n)));
 }
 
 function lineCount(value: string): number {
@@ -574,6 +583,181 @@ function envBlock(environment: ExecutionEnvironment, model: string): string {
   ].join("\n");
 }
 
+function createSkillCatalogLoader(): (environment: ExecutionEnvironment) => Promise<SkillCatalog> {
+  let cache:
+    | {
+        cwd: string;
+        loadedAt: number;
+        catalog: SkillCatalog;
+      }
+    | undefined;
+  return async (environment: ExecutionEnvironment) => {
+    const cwd = environment.workingDirectory();
+    const nowMs = Date.now();
+    if (cache && cache.cwd === cwd && nowMs - cache.loadedAt < 3000) {
+      return cache.catalog;
+    }
+    const catalog = await discoverSkills({ cwd });
+    cache = { cwd, loadedAt: nowMs, catalog };
+    return catalog;
+  };
+}
+
+function renderSkillPromptBlock(catalog: SkillCatalog): string {
+  const lines: string[] = [];
+  lines.push("<Skills>");
+  lines.push("Local skill packages are supported in agentskills.io style (folder with SKILL.md).");
+  lines.push("Use `search_skills` to discover skills and `get_skill` to load full instructions before execution.");
+  lines.push(`Detected local skills: ${catalog.skills.length}`);
+  if (catalog.skills.length > 0) {
+    lines.push("Skill index (first 20):");
+    for (const skill of catalog.skills.slice(0, 20)) {
+      lines.push(`- ${skill.id}: ${skill.description || "(no description)"}`);
+    }
+  } else {
+    lines.push("No local skills discovered in configured roots.");
+  }
+  if (catalog.roots.length > 0) {
+    lines.push("Skill roots:");
+    for (const root of catalog.roots.slice(0, 8)) {
+      lines.push(`- ${root}`);
+    }
+  }
+  if (catalog.errors.length > 0) {
+    lines.push("Skill loader warnings:");
+    for (const error of catalog.errors.slice(0, 3)) {
+      lines.push(`- ${error}`);
+    }
+  }
+  lines.push("</Skills>");
+  return lines.join("\n");
+}
+
+function formatSkillSearchResult(catalog: SkillCatalog, query: string, limit: number): string {
+  const hits = query.trim() ? searchSkills(catalog, query, limit) : catalog.skills.slice(0, limit);
+  if (hits.length === 0) {
+    return JSON.stringify(
+      {
+        query,
+        total: catalog.skills.length,
+        results: [],
+        roots: catalog.roots,
+        note: "No matching skills found.",
+      },
+      null,
+      2,
+    );
+  }
+  const payload = {
+    query,
+    total: catalog.skills.length,
+    results: hits.map((skill) => ({
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      directory: skill.directory,
+      file_count: skill.files.length,
+    })),
+  };
+  return JSON.stringify(payload, null, 2);
+}
+
+function formatSkillTextHeader(skill: { id: string; name: string; description: string; directory: string }): string {
+  return [
+    `# Skill: ${skill.name}`,
+    `id: ${skill.id}`,
+    `description: ${skill.description || "(none)"}`,
+    `directory: ${skill.directory}`,
+  ].join("\n");
+}
+
+function makeSkillTools(loadCatalog: (environment: ExecutionEnvironment) => Promise<SkillCatalog>): RegisteredTool[] {
+  return [
+    {
+      definition: {
+        name: "search_skills",
+        description: "Search local agent skills compatible with agentskills.io format.",
+        parameters: schema(
+          {
+            query: { type: "string" },
+            limit: { type: "integer" },
+          },
+          [],
+        ),
+      },
+      async execute(args, env) {
+        const catalog = await loadCatalog(env);
+        const query = String(args.query ?? "").trim();
+        const limit = clampInt(args.limit, 1, 50, 10);
+        return formatSkillSearchResult(catalog, query, limit);
+      },
+    },
+    {
+      definition: {
+        name: "get_skill",
+        description: "Load a specific skill instruction package (SKILL.md plus optional files).",
+        parameters: schema(
+          {
+            id: { type: "string" },
+            name: { type: "string" },
+            file_path: { type: "string" },
+            include_files: { type: "boolean" },
+            max_chars: { type: "integer" },
+          },
+          [],
+        ),
+      },
+      async execute(args, env) {
+        const catalog = await loadCatalog(env);
+        const skillId = String(args.id ?? args.name ?? "").trim();
+        if (!skillId) {
+          throw new Error("id (or name) is required");
+        }
+        const skill = getSkillById(catalog, skillId);
+        if (!skill) {
+          return `Skill not found: ${skillId}`;
+        }
+        const maxChars = clampInt(args.max_chars, 512, 1_000_000, 100_000);
+        const includeFiles = Boolean(args.include_files ?? false);
+        const requestedFile = String(args.file_path ?? "").trim();
+
+        if (requestedFile) {
+          const content = await readSkillFile(skill, requestedFile, maxChars);
+          return [
+            formatSkillTextHeader(skill),
+            "",
+            `## File: ${requestedFile}`,
+            content.slice(0, maxChars),
+          ].join("\n");
+        }
+
+        const lines: string[] = [];
+        lines.push(formatSkillTextHeader(skill));
+        lines.push("");
+        lines.push(`files (${skill.files.length}):`);
+        for (const file of skill.files.slice(0, 80)) {
+          lines.push(`- ${file.path}`);
+        }
+        lines.push("");
+        lines.push("## SKILL.md");
+        lines.push(skill.instructions.slice(0, maxChars));
+        if (includeFiles) {
+          for (const file of skill.files) {
+            if (file.path === "SKILL.md" || file.path === "skill.md") {
+              continue;
+            }
+            const content = await readSkillFile(skill, file.path, maxChars);
+            lines.push("");
+            lines.push(`## File: ${file.path}`);
+            lines.push(content.slice(0, maxChars));
+          }
+        }
+        return lines.join("\n");
+      },
+    },
+  ];
+}
+
 function makeProfile(params: {
   id: string;
   model: string;
@@ -584,17 +768,22 @@ function makeProfile(params: {
   for (const tool of makeCoreTools()) {
     registry.register(tool);
   }
+  const loadSkillCatalog = createSkillCatalogLoader();
+  for (const skillTool of makeSkillTools(loadSkillCatalog)) {
+    registry.register(skillTool);
+  }
   return {
     id: params.id,
     model: params.model,
     toolRegistry: registry,
     async buildSystemPrompt(environment, projectDocs) {
       const docs = projectDocs || (await discoverProjectDocs(environment, params.id));
+      const skills = await loadSkillCatalog(environment);
       const tools = registry
         .definitions()
         .map((d) => `- ${d.name}: ${d.description}`)
         .join("\n");
-      return `${params.basePrompt}\n\n${envBlock(environment, params.model)}\n\n<Tools>\n${tools}\n</Tools>\n\n${docs}`;
+      return `${params.basePrompt}\n\n${envBlock(environment, params.model)}\n\n<Tools>\n${tools}\n</Tools>\n\n${renderSkillPromptBlock(skills)}\n\n${docs}`;
     },
     tools() {
       return registry.definitions();

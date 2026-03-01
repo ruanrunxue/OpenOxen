@@ -1,189 +1,153 @@
 # OpenOxen
 
-OpenOxen 是对 [strongdm/attractor](https://github.com/strongdm/attractor) 的实现，包含：
-- Attractor Pipeline Engine
-- Agent（基于 Coding Agent Loop 规范）
-- LLM Client（当前内置 `pi-ai` 实现）
+OpenOxen 是基于 [strongdm/attractor](https://github.com/strongdm/attractor) 设计思想实现的本地工程化编排系统，核心包含 4 个模块：
 
-对应模块：
-- `src/cli`：命令行入口（`openoxen dev`），负责生成并执行 pipeline
-- `src/attractor`：DOT 解析、验证、执行引擎、节点处理器、checkpoint
-- `src/agent`：Session 循环、Provider Profile、Tool Registry、本地执行环境、事件
-- `src/llm-client`：LLM 客户端抽象实现集合（当前含 `pi-ai`）
+- `src/cli`：命令行入口（`openoxen dev` / `openoxen login`）
+- `src/cli`：命令行入口（`openoxen dev` / `openoxen login` / `openoxen skills`）
+- `src/attractor`：DOT 解析、校验、执行引擎、checkpoint
+- `src/agent`：agent loop、工具调用、执行环境
+- `src/llm-client`：统一 LLM client 适配层（当前默认 `pi-ai`）
 
-调用关系（关键）：
-- `attractor` 不直接调用 `pi-ai`
-- `attractor` 的 codergen backend 通过 `agent` 的 `Session` 发起 LLM 调用
-- `agent` 再通过 `llm-client`（`pi-ai` 实现）做统一 LLM 请求
+关键调用链：`attractor -> agent -> llm-client(pi-ai)`。
 
-## 环境要求
+Agent 现已支持本地 Skills（兼容 agentskills.io 目录格式），可通过工具调用：
 
-- Node.js `>= 22`（使用 `--experimental-strip-types` 直接运行 TypeScript 测试）
-- npm `>= 10`
+- `search_skills`：检索可用技能
+- `get_skill`：读取指定技能的 `SKILL.md` 与附加文件
 
 ## 快速开始
 
 ```bash
+npm install
 npm test
 ```
 
-本地直接运行 CLI（无需安装到全局）：
+本地运行：
 
 ```bash
-npm run cli -- dev "实现一个用户登录接口" --task user-login
+npm run cli -- dev "实现一个网页版贪吃蛇小游戏"
 ```
 
-OAuth 登录（pi 模块）：
+OAuth 登录（默认 `openai-codex`）：
 
 ```bash
 npm run cli -- login
 ```
 
-当前测试会覆盖：
-- Attractor 核心行为（解析、校验、路由、goal gate、retry、human gate）
-- Agent 核心行为（工具循环、截断、steering、loop detection）
-- `llm-client` 的 `pi-ai` 实现 smoke tests
-
-## 使用方式
-
-### 0) CLI 入口（推荐）
+## CLI 用法
 
 ```bash
 openoxen dev "<需求>" [--task <name>] [--quiet|--verbose]
 openoxen login [--provider <name>]
+openoxen skills list [--query <text>] [--limit <n>] [--json]
+openoxen skills get <id> [--file <path>] [--include-files] [--max-chars <n>] [--json]
 ```
 
-- 默认输出 DOT 文件：`openoxen.pipeline.<timestamp>.dot`（保存在当前目录）
-- 指定 `--task` 后输出：`<task>.dot`（保存在当前目录）
-- 命令会在生成 DOT 后立即运行 Attractor
-- 默认 pipeline：测试用例编写 -> 开发 -> 代码检视 -> 测试
-- 测试失败最多 5 轮后进入人工介入（可继续或中止）
-- `openoxen login` 会触发 `llm-client/pi-ai` 的 OAuth 登录流程，默认 provider=`openai-codex`
-- `openoxen dev` 默认输出运行追踪日志（可用 `--quiet` 关闭）：
-  - OpenOxen 发给 agent 的阶段输入
-  - agent 发给 LLM 的 request/messages/tools
-  - LLM 返回文本与 tool calls
-  - 工具调用开始/结束与工具输出
+### `openoxen dev` 行为
 
-常用环境变量（OAuth / pi-ai）：
-- `OPENOXEN_AUTH_FILE`：OAuth 凭证文件路径（默认 `~/.openoxen/auth.json`）
-- `OPENOXEN_PI_PROVIDER`：覆盖 provider 到 `@mariozechner/pi-ai` 的映射
-- `OPENOXEN_MODEL`：覆盖请求模型名
-- `OPENOXEN_FAKE_PI=1`：启用本地假实现（测试/离线调试）
-- `OPENOXEN_NO_BROWSER=1`：登录时不自动尝试打开浏览器
-- `OPENOXEN_VERBOSE=0`：默认关闭 `openoxen dev` 的追踪日志
-- `OPENOXEN_TRACE_PI=1`：打印 `llm-client/pi-ai` 实际发送给 `@mariozechner/pi-ai` 的 context/options（apiKey 自动脱敏）
+1. 生成 DOT（优先由 agent 生成，失败时使用 fallback 模板）。
+2. DOT 保存到命令执行目录：
+- 默认：`openoxen.pipeline.<timestamp>.dot`
+- 指定 `--task`：`<task>.dot`
+3. 立即执行 Attractor。
+4. 运行日志写入：`.openoxen.logs.<timestamp>/`。
 
-依赖说明：
-- OpenOxen 的 `llm-client/pi-ai` 底层直接调用 `@mariozechner/pi-ai`
-- 首次使用请先安装依赖：`npm install`
+默认流程：
+- `write_tests -> develop -> review -> test`
+- 测试失败最多 5 轮后进入 `human_intervention`。
 
-常见 agent 工具（含 openclaw 风格别名）：
-- 文件：`read_file/write_file/edit_file/apply_patch`，别名 `read/write/edit`
-- 搜索：`grep/glob`，别名 `search/find`
-- 目录：`ls/list_dir`
-- 命令：`shell`，别名 `exec/bash/process(run)`
-- 子 agent：`spawn_agent/send_input/wait/close_agent`
+### `openoxen skills` 行为
 
-### 1) 运行 Attractor Pipeline
+- `skills list`：列出本地可发现技能，可用 `--query` 检索、`--limit` 限制数量。
+- `skills get <id>`：查看技能详情（默认输出 `SKILL.md`），可用 `--file` 读取指定文件。
 
-```ts
-import { parseDot, runPipeline, createDefaultRuntime } from "./src/attractor/index.ts";
-import { createPiAiClientAdapter, createPiAiCodergenBackend } from "./src/llm-client/pi-ai.ts";
+## 日志输出（已精简）
 
-const dot = `
-digraph demo {
-  graph [goal="Create hello world script"]
-  start [shape=Mdiamond]
-  plan [shape=box, prompt="Plan for: $goal"]
-  done [shape=Msquare]
-  start -> plan -> done
-}
-`;
+`--verbose`（或默认未关闭）下：
+- 每轮仅输出一条 LLM 往返摘要（不打印 system prompt）
+- 输出 stage 输入/输出长度摘要
+- 输出测试阶段结果摘要
 
-const piClient = {
-  async complete(req: any) {
-    return { id: "1", text: "ok", tool_calls: [] };
-  },
-};
+颜色规则：
+- 绿色：关键成功
+- 红色：关键失败
+- 黄色：回退/警告
+- 青色：trace 摘要
 
-const llmClient = createPiAiClientAdapter(piClient);
-const runtime = createDefaultRuntime({
-  codergenBackend: createPiAiCodergenBackend(llmClient, {
-    model: "gpt-5.2-codex",
-    provider: "openai",
-  }),
-});
+可用 `--quiet` 或 `OPENOXEN_VERBOSE=0` 关闭 trace。
 
-const result = await runPipeline(parseDot(dot), {
-  logsRoot: "./.tmp/openoxen-run",
-  runtime,
-});
+## 测试阶段自动自愈
 
-console.log(result.status, result.completedNodes);
+`test_*` 节点支持失败识别与自动修复重试（默认开启）：
+
+- 缺模块：自动尝试安装依赖
+- 缺 Playwright 浏览器：自动尝试 `npx playwright install`
+- 端口占用：自动清理占用进程
+
+可通过图属性覆盖：
+- `auto_test_repair`
+- `auto_test_repair_max_attempts`
+- `repair_missing_module_command`
+- `repair_missing_browser_command`
+- `repair_port_in_use_command`
+- `repair_tests_failed_command`
+- `repair_generic_error_command`
+
+## 常用环境变量
+
+- `OPENOXEN_MODEL`：覆盖默认模型
+- `OPENOXEN_AUTH_FILE`：OAuth 凭证文件（默认 `~/.openoxen/auth.json`）
+- `OPENOXEN_PI_PROVIDER`：覆盖 provider 映射
+- `OPENOXEN_SKILLS_DIRS`：自定义 skills 根目录（多目录用系统 path 分隔符，如 macOS/Linux 用 `:`）
+- `OPENOXEN_ENABLE_HOME_SKILLS=1`：额外加载 `~/.codex/skills` 和 `~/.codex/superpowers/skills`
+- `OPENOXEN_VERBOSE=0`：默认关闭 trace
+- `OPENOXEN_TRACE_PI=1`：打印 llm-client -> pi-ai 适配层 trace（敏感字段脱敏）
+- `OPENOXEN_NO_BROWSER=1`：登录时不自动打开浏览器
+- `OPENOXEN_FAKE_PI=1`：使用本地 fake pi（调试/测试）
+
+## Skills 目录格式（agentskills.io 兼容）
+
+默认扫描以下目录（相对 `openoxen dev` 运行目录）：
+
+- `.openoxen/skills/*/SKILL.md`
+- `.codex/skills/*/SKILL.md`
+
+技能目录最小结构示例：
+
+```text
+.openoxen/skills/snake-game/
+  SKILL.md
+  references/checklist.md
+  scripts/setup.sh
 ```
 
-### 2) 运行 Agent Session
+`SKILL.md` 支持 frontmatter（如 `name`、`description`），Agent 会在系统提示中公布技能索引，并通过 `search_skills/get_skill` 按需加载详情。
 
-```ts
-import { Session, LocalExecutionEnvironment, createOpenAIProfile } from "./src/agent/index.ts";
-import { createPiAiClientAdapter } from "./src/llm-client/pi-ai.ts";
-
-const env = new LocalExecutionEnvironment({ workingDir: process.cwd() });
-const profile = createOpenAIProfile();
-
-const piClient = {
-  async complete(request: any) {
-    return { id: "r1", text: "done", tool_calls: [] };
-  },
-};
-
-const session = new Session({
-  providerProfile: profile,
-  executionEnv: env,
-  llmClient: createPiAiClientAdapter(piClient),
-});
-
-const result = await session.submit("Create a file hello.py");
-console.log(result.text);
-```
-
-## 模块关系（架构图）
+## 架构图
 
 ```mermaid
 flowchart LR
-  U[User / Host App]
-  A[src/attractor<br/>Pipeline Engine]
-  L[src/agent<br/>Session + Tools + Env]
-  P[src/llm-client<br/>LLM Client Implementations]
-  C[(pi-ai Client Impl)]
-  FS[(Local Filesystem / Shell)]
+  U[User]
+  CLI[src/cli]
+  ATTR[src/attractor]
+  AG[src/agent]
+  LLM[src/llm-client]
+  PI[@mariozechner/pi-ai]
+  FS[(Workspace / Shell)]
 
-  U --> A
-  U --> L
-
-  A -->|codergen backend| L
-  L -->|llmClient.complete| P
-  P --> C
-
-  L --> FS
-  A -->|artifacts/checkpoints| FS
+  U --> CLI
+  CLI --> ATTR
+  ATTR -->|CodergenBackend| AG
+  AG -->|LLMClient| LLM
+  LLM --> PI
+  AG --> FS
+  ATTR --> FS
 ```
 
-## 目录结构
+## 文档索引
 
-```text
-src/
-  cli/        # openoxen dev / login commands
-  attractor/   # DOT -> Graph -> Validation -> Runtime
-  agent/       # Session + Tool Execution + Provider Profiles
-  llm-client/  # LLM client implementations (pi-ai, ...)
-tests/
-  cli.test.ts
-  attractor-core.test.ts
-  attractor-engine.test.ts
-  agent.test.ts
-  integration-smoke.test.ts
-docs/
-  spec-parity-notes.md
-```
+- 设计总览：`docs/design/openoxen-overall-design.md`
+- 模块设计：`docs/design/module-*.md`
+- 特性设计：`docs/design/features/feature-*.md`
+- 文档维护规范：`docs/design/documentation-policy.md`
+- 规格对齐说明：`docs/spec-parity-notes.md`

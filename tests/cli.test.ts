@@ -10,6 +10,16 @@ async function mkTmpDir(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), `${prefix}-`));
 }
 
+async function writeSkill(
+  cwd: string,
+  id: string,
+  content = "---\nname: snake-game\ndescription: Snake skill\n---\n\nUse this skill.\n",
+): Promise<void> {
+  const dir = path.join(cwd, '.openoxen', 'skills', id);
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, 'SKILL.md'), content, 'utf8');
+}
+
 test('openoxen dev generates timestamped dot in cwd and immediately executes run', async () => {
   const cwd = await mkTmpDir('openoxen-cli-default');
   const logs: string[] = [];
@@ -146,4 +156,46 @@ test('openoxen login --provider passes provider to oauth handler', async () => {
 
   assert.equal(code, 0);
   assert.equal(providerSeen, 'openai-codex');
+});
+
+test('openoxen skills list prints discovered skills', async () => {
+  const cwd = await mkTmpDir('openoxen-cli-skills-list');
+  const logs: string[] = [];
+  await writeSkill(cwd, 'snake-game');
+
+  const code = await runCli(['skills', 'list'], {
+    cwd: () => cwd,
+    log: (line) => logs.push(line),
+    error: () => {},
+  });
+
+  assert.equal(code, 0);
+  assert.equal(logs.some((line) => line.includes('snake-game')), true);
+});
+
+test('openoxen skills get prints skill content', async () => {
+  const cwd = await mkTmpDir('openoxen-cli-skills-get');
+  const logs: string[] = [];
+  await writeSkill(
+    cwd,
+    'snake-game',
+    [
+      '---',
+      'name: snake-game',
+      'description: Build snake game',
+      '---',
+      '',
+      'Write tests first.',
+    ].join('\n'),
+  );
+
+  const code = await runCli(['skills', 'get', 'snake-game'], {
+    cwd: () => cwd,
+    log: (line) => logs.push(line),
+    error: () => {},
+  });
+
+  assert.equal(code, 0);
+  assert.equal(logs.some((line) => line.includes('Build snake game')), true);
+  assert.equal(logs.some((line) => line.includes('Write tests first')), true);
 });

@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { discoverSkills, getSkillById, readSkillFile, searchSkills, type SkillCatalog } from "../agent/index.ts";
 import { createPiAiClientAdapterFromEnv, loginPiWithOauthFromEnv, type LLMClient } from "../llm-client/pi-ai.ts";
 import { formatTimestamp, generateDotWithAgent, runDotImmediately, sanitizeTaskName, type DotRunResult } from "./dev.ts";
 
@@ -18,6 +19,7 @@ export interface CliDeps {
     params: { taskName?: string; cwd: string; now: Date; llmClient: LLMClient; verbose: boolean },
   ) => Promise<string>;
   runDot: (dotSource: string, params: { cwd: string; now: Date; llmClient: LLMClient; verbose: boolean }) => Promise<DotRunResult>;
+  discoverSkillsCatalog: (cwd: string) => Promise<SkillCatalog>;
 }
 
 const ANSI = {
@@ -38,11 +40,15 @@ function usage(): string {
     "Usage:",
     "  openoxen dev \"<需求>\" [--task <name>] [--quiet|--verbose]",
     "  openoxen login [--provider <name>]",
+    "  openoxen skills list [--query <text>] [--limit <n>] [--json]",
+    "  openoxen skills get <id> [--file <path>] [--include-files] [--max-chars <n>] [--json]",
     "",
     "Examples:",
     "  openoxen dev \"实现用户登录\"",
     "  openoxen dev \"实现支付接口\" --task payment-api --quiet",
     "  openoxen login",
+    "  openoxen skills list --query snake",
+    "  openoxen skills get snake-game",
   ].join("\n");
 }
 
@@ -108,6 +114,101 @@ function parseLoginArgs(args: string[]): { provider: string; error?: string } {
   return { provider };
 }
 
+interface SkillsListArgs {
+  query: string;
+  limit: number;
+  json: boolean;
+  error?: string;
+}
+
+interface SkillsGetArgs {
+  id: string;
+  filePath?: string;
+  includeFiles: boolean;
+  maxChars: number;
+  json: boolean;
+  error?: string;
+}
+
+function parseSkillsListArgs(args: string[]): SkillsListArgs {
+  let query = "";
+  let limit = 20;
+  let json = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const token = args[i]!;
+    if (token === "--query") {
+      const next = args[i + 1];
+      if (!next) {
+        return { query, limit, json, error: "Missing value for --query" };
+      }
+      query = next;
+      i += 1;
+      continue;
+    }
+    if (token === "--limit") {
+      const next = args[i + 1];
+      if (!next) {
+        return { query, limit, json, error: "Missing value for --limit" };
+      }
+      limit = Math.max(1, Math.min(200, Number(next)));
+      i += 1;
+      continue;
+    }
+    if (token === "--json") {
+      json = true;
+      continue;
+    }
+    return { query, limit, json, error: `Unknown argument for skills list: ${token}` };
+  }
+  return { query, limit, json };
+}
+
+function parseSkillsGetArgs(args: string[]): SkillsGetArgs {
+  let id = "";
+  let filePath: string | undefined;
+  let includeFiles = false;
+  let maxChars = 120_000;
+  let json = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const token = args[i]!;
+    if (!token.startsWith("--") && !id) {
+      id = token;
+      continue;
+    }
+    if (token === "--file") {
+      const next = args[i + 1];
+      if (!next) {
+        return { id, filePath, includeFiles, maxChars, json, error: "Missing value for --file" };
+      }
+      filePath = next;
+      i += 1;
+      continue;
+    }
+    if (token === "--include-files") {
+      includeFiles = true;
+      continue;
+    }
+    if (token === "--max-chars") {
+      const next = args[i + 1];
+      if (!next) {
+        return { id, filePath, includeFiles, maxChars, json, error: "Missing value for --max-chars" };
+      }
+      maxChars = Math.max(256, Math.min(1_000_000, Number(next)));
+      i += 1;
+      continue;
+    }
+    if (token === "--json") {
+      json = true;
+      continue;
+    }
+    return { id, filePath, includeFiles, maxChars, json, error: `Unknown argument for skills get: ${token}` };
+  }
+  if (!id) {
+    return { id, filePath, includeFiles, maxChars, json, error: "Missing skill id" };
+  }
+  return { id, filePath, includeFiles, maxChars, json };
+}
+
 function defaultDeps(): CliDeps {
   return {
     cwd: () => process.cwd(),
@@ -135,6 +236,7 @@ function defaultDeps(): CliDeps {
         verbose: params.verbose,
       });
     },
+    discoverSkillsCatalog: async (cwd) => discoverSkills({ cwd }),
   };
 }
 
@@ -161,6 +263,115 @@ export async function runCli(argv: string[], partialDeps: Partial<CliDeps> = {})
       deps.error(String(error));
       return 1;
     }
+  }
+
+  if (command === "skills") {
+    const [sub, ...skillArgs] = rest;
+    const cwd = deps.cwd();
+    const catalog = await deps.discoverSkillsCatalog(cwd);
+    if (sub === "list") {
+      const parsed = parseSkillsListArgs(skillArgs);
+      if (parsed.error) {
+        deps.error(parsed.error);
+        deps.error(usage());
+        return 1;
+      }
+      const hits = parsed.query.trim() ? searchSkills(catalog, parsed.query, parsed.limit) : catalog.skills.slice(0, parsed.limit);
+      if (parsed.json) {
+        deps.log(
+          JSON.stringify(
+            {
+              total: catalog.skills.length,
+              query: parsed.query,
+              roots: catalog.roots,
+              results: hits.map((skill) => ({
+                id: skill.id,
+                name: skill.name,
+                description: skill.description,
+                directory: skill.directory,
+                file_count: skill.files.length,
+              })),
+            },
+            null,
+            2,
+          ),
+        );
+        return 0;
+      }
+      deps.log(`Skills: ${hits.length}/${catalog.skills.length}`);
+      for (const skill of hits) {
+        deps.log(`- ${skill.id}: ${skill.description || "(no description)"}`);
+      }
+      if (hits.length === 0) {
+        deps.log("No skills found.");
+      }
+      return 0;
+    }
+
+    if (sub === "get") {
+      const parsed = parseSkillsGetArgs(skillArgs);
+      if (parsed.error) {
+        deps.error(parsed.error);
+        deps.error(usage());
+        return 1;
+      }
+      const skill = getSkillById(catalog, parsed.id);
+      if (!skill) {
+        deps.error(`Skill not found: ${parsed.id}`);
+        return 1;
+      }
+
+      let output = "";
+      if (parsed.filePath) {
+        const content = await readSkillFile(skill, parsed.filePath, parsed.maxChars);
+        output = [`# ${skill.name}`, `id: ${skill.id}`, `file: ${parsed.filePath}`, "", content].join("\n");
+      } else {
+        const lines: string[] = [];
+        lines.push(`# ${skill.name}`);
+        lines.push(`id: ${skill.id}`);
+        lines.push(`description: ${skill.description || "(none)"}`);
+        lines.push(`directory: ${skill.directory}`);
+        lines.push("");
+        lines.push("## SKILL.md");
+        lines.push(skill.instructions.slice(0, parsed.maxChars));
+        if (parsed.includeFiles) {
+          for (const file of skill.files) {
+            if (file.path === "SKILL.md" || file.path === "skill.md") {
+              continue;
+            }
+            const content = await readSkillFile(skill, file.path, parsed.maxChars);
+            lines.push("");
+            lines.push(`## File: ${file.path}`);
+            lines.push(content);
+          }
+        }
+        output = lines.join("\n");
+      }
+
+      if (parsed.json) {
+        deps.log(
+          JSON.stringify(
+            {
+              id: skill.id,
+              name: skill.name,
+              description: skill.description,
+              directory: skill.directory,
+              files: skill.files.map((file) => file.path),
+              content: output,
+            },
+            null,
+            2,
+          ),
+        );
+      } else {
+        deps.log(output);
+      }
+      return 0;
+    }
+
+    deps.error(`Unknown skills subcommand: ${String(sub ?? "")}`);
+    deps.error(usage());
+    return 1;
   }
 
   if (command !== "dev") {

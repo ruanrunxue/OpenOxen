@@ -1,38 +1,30 @@
 # OpenOxen Overall Design
 
-## 1. Design Goals
+## 1. 设计目标
 
-OpenOxen 的目标是将“需求 -> 代码实现 -> 测试验证”的流程标准化为可执行的 pipeline，并通过 agent-loop 与统一 LLM client 实现可替换模型能力。
+OpenOxen 将“需求 -> 代码生成/修改 -> 测试验证 -> 人工介入”落地为可执行 pipeline，并保证：
 
-核心设计目标：
+1. 分层清晰，避免跨层耦合。
+2. 默认可观测，便于定位失败节点。
+3. 失败显式化，避免静默误判。
+4. 在测试阶段提供有限自动自愈能力。
+5. 支持可复用本地 Skills（agentskills.io 兼容格式）。
 
-1. 与 Attractor 和 Coding Agent Loop 规范保持语义一致。
-2. 明确分层，避免 `attractor` 直接依赖具体 LLM SDK。
-3. 默认可观测，运行时可追踪 prompt、tool call、阶段输出。
-4. 默认安全，工具执行在本地受控环境中进行。
-5. 易扩展，可替换 provider、tool、runtime 组件。
+## 2. 模块边界
 
-## 2. Design Principles
+- `src/cli`
+  - 命令入口、参数解析、DOT 保存、运行结果输出。
+- `src/attractor`
+  - DOT 解析/校验、节点执行、路由、checkpoint、阶段产物。
+- `src/agent`
+  - agent loop、工具调用、provider profile、本地执行环境、skills 能力。
+- `src/llm-client`
+  - 统一 LLM 适配层，当前默认 `pi-ai`。
 
-1. Single Responsibility  
-每个模块只负责一个抽象层：`cli` 负责交互入口，`attractor` 负责流程编排，`agent` 负责推理与工具循环，`llm-client` 负责模型协议适配。
+唯一模型调用链：
+- `attractor -> agent -> llm-client -> pi-ai`
 
-2. Interface First  
-模块之间通过稳定接口协作：
-- `CodergenBackend`：attractor 对 agent 的依赖面
-- `LLMClient`：agent 对模型调用的依赖面
-- `ExecutionEnvironment`：agent 对执行环境的依赖面
-
-3. Deterministic Pipeline + Non-deterministic Intelligence  
-流程路由尽量确定（DOT + 条件 + retry + human gate），智能不确定性仅存在于 codergen/agent 阶段。
-
-4. Observable by Default  
-`openoxen dev` 默认输出关键链路日志；可通过环境变量进一步看到 `llm-client -> pi-ai` 的真实请求上下文。
-
-5. Fail Explicitly  
-测试失败、条件不满足、路由缺失、无效 DOT 等都明确失败，不做静默吞错。
-
-## 3. High-level Architecture
+## 3. 高层架构
 
 ```mermaid
 flowchart LR
@@ -42,69 +34,77 @@ flowchart LR
   AG -->|LLMClient.complete| LLM[src/llm-client]
   LLM --> PI[@mariozechner/pi-ai]
   AG --> ENV[LocalExecutionEnvironment]
-  ATTR --> LOGS[Run Logs / Checkpoints]
+  ATTR --> LOGS[Artifacts + Checkpoint]
 ```
 
-关键约束：
-- `attractor` 不直接调用 `@mariozechner/pi-ai`。
-- `attractor -> agent -> llm-client -> pi-ai` 是唯一模型调用路径。
+## 4. 运行主流程（`openoxen dev`）
 
-## 4. Core Runtime Flow (`openoxen dev`)
+1. CLI 解析需求与选项（`--task` / `--quiet` / `--verbose`）。
+2. 通过 agent 生成 DOT；若非法则 fallback 到内置模板。
+3. DOT 写入当前目录并立即执行。
+4. Attractor 从 `start` 开始逐节点执行。
+5. `box` 节点通过 codergen backend 走 agent loop。
+6. `test_*` 节点执行测试命令并根据结果路由。
+7. 失败最多 5 轮，进入 `human_intervention`。
 
-1. CLI 解析需求、任务名与日志级别。  
-2. 使用 agent 生成 DOT（若不合法则回退模板）。  
-3. DOT 文件落地到用户当前目录（时间戳或 `--task` 文件名）。  
-4. Attractor 立即执行 DOT。  
-5. box 节点由 codergen backend 调用 agent 执行；parallelogram 节点执行测试命令。  
-6. 默认链路：`write_tests -> develop -> review -> test`。  
-7. 测试失败最多 5 轮，进入人工介入（继续或停止）。  
-8. 所有阶段产物与状态写入 `.openoxen.logs.<timestamp>`。
+补充命令：
 
-## 5. Data and Control Contracts
+- `openoxen skills list/get` 用于本地 skills 发现与调试，不触发 Attractor 流程。
 
-1. DOT/Graph Contract  
-- `Mdiamond`：start
-- `Msquare`：done/exit
-- `box`：codergen
-- `parallelogram`：tool command（通常为测试命令）
+## 5. 关键策略
 
-2. Agent Request/Response Contract  
-- Request 包含 `messages + tools + model/provider`
-- Response 包含 `text + tool_calls`
-- 工具循环时必须保留 assistant `tool_calls` 与后续 `toolResult` 配对关系
+### 5.1 路由与收敛
 
-3. Outcome Contract  
-每个节点输出 `status`（`success/fail/retry/...`）及可选 `context_updates`，由引擎用于下一步路由。
+- 测试节点要求显式 `outcome=success` / `outcome=fail` 路由。
+- 生成 DOT 时会校验 dev/review/test 合约，不满足则 fallback。
 
-## 6. Reliability Strategy
+### 5.2 测试结果判定
 
-1. DOT 结构与条件语法校验（启动即失败）。  
-2. 节点级 retry/backoff（含上限和 partial 策略）。  
-3. human gate 提供人工兜底。  
-4. checkpoint 支持 resume。  
-5. CLI 对最终结果做二次判定：测试节点失败即整体失败。
+- 不仅看 exit code，也解析 stdout/stderr 关键失败信号（如 `N failed`、`Cannot find module`、`Executable doesn't exist`）。
+- 避免“命令返回 0 但测试实际上失败”的误判。
 
-## 7. Observability Strategy
+### 5.3 自动自愈（test 节点）
 
-默认观测内容：
-- OpenOxen -> Agent 的阶段输入
-- Agent -> LLM 的消息与工具暴露
-- LLM -> Agent 的文本与 tool calls
-- Tool call 开始/结束和输出
+- 默认开启，按错误类型执行修复命令并重试。
+- 支持通过 graph attrs 覆盖修复命令。
+- 所有修复步骤写入 `test.auto_repair_log` 上下文。
 
-增强观测：
-- `OPENOXEN_TRACE_PI=1` 输出 `llm-client` 发给 `pi-ai` 的 context/options（敏感字段脱敏）。
+### 5.4 可观测性
 
-## 8. Extensibility
+- `--verbose` 下每轮仅输出一次摘要，不打印 system prompt。
+- 关键成功/失败信息使用颜色区分。
+- 每阶段产物落盘：`prompt.md`、`response.md`、`status.json`。
 
-1. 新模型提供商：扩展 `llm-client` 实现并保持 `LLMClient` 接口。  
-2. 新工具：在 `agent/providers.ts` 注册 tool definition + execute。  
-3. 新 pipeline runtime：替换/扩展 `createDefaultRuntime` handler registry。  
-4. 新交互模式：在 `src/cli` 增加子命令，不影响核心引擎。
+### 5.5 Skills 复用（agent）
 
-## 9. Non-goals
+- Agent 支持加载本地 skills 目录（`SKILL.md` + 附加文件）。
+- 通过 `search_skills/get_skill` 工具按需检索与读取技能内容。
+- system prompt 只注入技能索引摘要，避免上下文膨胀。
 
-1. 不在 `attractor` 中实现具体模型 SDK 细节。  
-2. 不保证一次生成即完成，允许迭代与人工干预。  
-3. 不绑定单一供应商模型，`pi-ai` 只是当前默认实现之一。
+## 6. 设计取舍
 
+1. 编排层与模型层严格解耦
+- 优点：替换模型 SDK 成本低。
+- 代价：跨层调试需要结合多级日志。
+
+2. 工具执行优先本地环境
+- 优点：开箱即用，闭环快。
+- 代价：依赖宿主机环境一致性。
+
+3. 自动自愈只覆盖高频故障
+- 优点：稳定收敛，复杂度可控。
+- 代价：无法替代人工处理所有复杂失败。
+
+## 7. 设计文档组织
+
+当前采用两层设计文档结构：
+
+1. 模块级设计（`docs/design/module-*.md`）
+- 关注模块边界、接口、依赖关系。
+
+2. 特性级设计（`docs/design/features/feature-*.md`）
+- 关注重要特性的目标、流程、失败恢复与观测策略。
+
+约束：
+- 任何重要特性变更都必须同步更新对应 feature design 文档。
+- 新增重要特性必须新增 feature design 文档并更新索引。

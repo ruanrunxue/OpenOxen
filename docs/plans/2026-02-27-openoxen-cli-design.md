@@ -1,6 +1,7 @@
 # OpenOxen CLI Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **Status:** Historical plan document. Actual CLI behavior is maintained in `README.md` and `docs/design/module-cli.md`.
 
 **Goal:** Add `openoxen dev "<需求>"` CLI that generates a DOT pipeline via Agent, saves DOT in current directory, and immediately runs Attractor.
 

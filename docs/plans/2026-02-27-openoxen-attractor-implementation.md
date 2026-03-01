@@ -1,6 +1,7 @@
 # OpenOxen Attractor Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **Status:** Historical plan document. Actual implementation status is maintained in `README.md` and `docs/design/*`.
 
 **Goal:** Build OpenOxen to implement Attractor + Coding Agent Loop specs, while using pi-ai instead of implementing the Unified LLM Client spec.
 

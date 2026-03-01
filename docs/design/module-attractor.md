@@ -1,90 +1,90 @@
 # Attractor Module Design (`src/attractor`)
 
-## 1. Responsibilities
+## 1. 职责
 
-Attractor 模块负责“流程图即执行计划”的编排执行：
+Attractor 模块是 OpenOxen 的流程编排内核，负责：
 
-1. 解析 DOT 到可执行图结构（`GraphSpec`）。
-2. 校验图合法性（start/exit/reachability/condition 语法）。
-3. 执行节点并基于 outcome 路由到下一节点。
-4. 维护运行上下文、checkpoint、日志产物。
+1. 解析 DOT 为可执行图结构。
+2. 校验图结构、边条件语法和可达性。
+3. 执行节点并按 outcome 路由。
+4. 记录阶段产物、状态与 checkpoint。
 
-它不直接负责 LLM 调用实现，LLM 节点通过 `CodergenBackend` 抽象委托给上层。
+## 2. 核心数据结构
 
-## 2. Core Data Model
+- `GraphSpec`：图级属性、节点、边
+- `NodeSpec`：节点 id 与 attrs
+- `Outcome`：节点执行结果（status、context_updates、failure_reason）
+- `PipelineContext`：运行时键值上下文
 
-1. `GraphSpec`
-- `id`, `attrs`, `nodes`, `edges`
+## 3. 引擎执行流程
 
-2. `NodeSpec`
-- `id`, `attrs`
-- `shape` 映射 handler 类型
+`runPipeline()` 主循环：
 
-3. `Outcome`
-- `status`（`success/fail/retry/partial_success/skipped`）
-- `context_updates`, `preferred_label`, `suggested_next_ids`
+1. `validateOrRaise(graph)`
+2. 初始化 manifest 与 graph attrs 到 context
+3. 从 start 节点循环执行
+4. `executeWithRetry()` 执行节点（支持重试/backoff）
+5. 记录 `status.json` 与 `checkpoint.json`
+6. `selectEdge()` 选择下一跳
+7. 到终止节点后返回 run result
 
-4. `PipelineContext`
-- 键值上下文容器，支持更新、快照、克隆
+## 4. Handler 体系
 
-## 3. Runtime Architecture
+- `StartHandler` / `ExitHandler`
+- `CodergenHandler`：写 prompt/response 产物，支持从输出中提取 `TEST_COMMAND`
+- `ToolHandler`：执行命令并更新上下文
+- `WaitForHumanHandler`：人工分支选择
+- `Conditional/Parallel/FanIn/ManagerLoop`：扩展占位
 
-1. `createDefaultRuntime`
-- 注册 handler：`start/exit/codergen/wait.human/conditional/parallel/tool/...`
+## 5. ToolHandler 关键行为
 
-2. `runPipeline`
-- 校验图
-- 初始化 manifest/context
-- 从 start 开始循环执行
-- 节点执行支持 retry/backoff
-- 按 condition/label/suggested_next_ids 选边
-- 终止时检查 goal gate
-- 写入 `status.json` 与 `checkpoint.json`
+### 5.1 命令解析
 
-## 4. Node Handling Strategy
+- 支持 `$test_command` / `${test_command}` 占位符。
+- 来源优先级：`context.test.command` > `graph.default_test_command`。
 
-1. `box` -> `CodergenHandler`
-- 写入 `prompt.md`
-- 调用 `CodergenBackend.run`
-- 写入 `response.md`
-- 回填上下文摘要
+### 5.2 测试失败识别
 
-2. `parallelogram` -> `ToolHandler`
-- 执行 `tool_command`
-- 成功写 tool output 到上下文，失败返回 fail
+`test_*` 节点不仅依赖 exit code，还会解析输出中的失败信号，例如：
+- `N failed`
+- `Cannot find module`
+- `browserType.launch: Executable doesn't exist`
+- `EADDRINUSE`
 
-3. `hexagon` -> `WaitForHumanHandler`
-- 读取可选边标签生成选项
-- 通过 interviewer 获取用户选择
-- 输出 `preferred_label/suggested_next_ids`
+### 5.3 自动自愈与重试
 
-## 5. Reliability and Recovery
+对 `test_*` 节点默认开启自动修复（可配置）：
+- 缺模块 -> 安装依赖
+- 缺浏览器 -> `npx playwright install`
+- 端口占用 -> 清理占用端口
 
-1. 结构性校验前置，防止运行期不可预测错误。  
-2. 每节点 outcome 落盘，便于定位失败节点。  
-3. checkpoint 支持 resume。  
-4. retry + backoff 可配置，避免瞬时失败直接终止。  
-5. goal gate 不满足可回跳到 retry target。
+可配置 graph attrs：
+- `auto_test_repair`
+- `auto_test_repair_max_attempts`
+- `repair_missing_module_command`
+- `repair_missing_browser_command`
+- `repair_port_in_use_command`
+- `repair_tests_failed_command`
+- `repair_generic_error_command`
 
-## 6. Extensibility
+## 6. 落盘与可恢复性
 
-1. 新节点类型  
-- 在 `handlers.ts` 增加 handler  
-- 在 runtime registry 注册映射  
+每个阶段目录下至少包含：
+- `status.json`
+-（codergen 节点）`prompt.md`、`response.md`
 
-2. 新路由语义  
-- 扩展 `condition.ts` 语法与 `evaluateCondition`  
+图级落盘：
+- `manifest.json`
+- `checkpoint.json`
 
-3. 新执行策略  
-- 自定义 runtime 或替换默认 handler 实现
+可用 `resume` 模式从 checkpoint 恢复。
 
-## 7. Design Trade-offs
+## 7. 设计取舍
 
-1. 使用 shape 到 handler 的映射而非硬编码节点名  
-优点：DOT 结构更灵活。  
-代价：需要维护 shape/type 约定。
+1. DOT 驱动 + 明确路由条件
+- 优点：流程语义可读且可复用。
+- 代价：需要对生成 DOT 做严格校验。
 
-2. 引擎内只依赖 `CodergenBackend` 接口  
-优点：编排层与模型层彻底解耦。  
-代价：跨层调试需要结合运行 trace。
-
+2. 编排层不直接接模型 SDK
+- 优点：保持抽象稳定。
+- 代价：调试时需结合 agent/llm-client 日志。
